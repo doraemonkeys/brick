@@ -1,0 +1,24 @@
+[
+    {
+        "metaData": {
+            "name": "Logger Brick",
+            "typeID": "Logger-XU8WQNK1F65QVH4OQ5XY"
+        },
+        "lives": [
+            {
+                "liveID": "Logger-XU8WQNK1F65QVH4OQ5XY",
+                "config": {
+                    "prefix": "Prefix1",
+                    "logLevel": "DEBUG"
+                }
+            },
+            {
+                "liveID": "Logger-QAAHX1JWAVS4T1KKAN6B",
+                "config": {
+                    "prefix": "Prefix2",
+                    "logLevel": "DEBUG"
+                }
+            }
+        ]
+    }
+]

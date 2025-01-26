@@ -53,15 +53,9 @@ Of course, you can also specify a different globally unique `liveID`.
 
 ### Parsing Configuration for Brick Instances
 
-If a Brick component needs to read external configuration from a file, it must implement the `BrickNewer` interface. The `NewBrick` method of this interface must parse the incoming JSON string representing the configuration and return a new instance of the Brick component.
+If a Brick component needs to read external configuration from a file, it must implement the `BrickNewer` interface. The `NewBrick` method of this interface parse the incoming JSON string representing the configuration and return a new instance of the Brick component.
 
 ```go
-import (
-    "encoding/json"
-    "github.com/your-repo/brick" // Assuming this is your import path
-)
-
-
 type Brick2 struct {
     ConfigString string `json:"configString" yaml:"configString" toml:"configString"`
     Brick1 *Brick1 `brick:""`
