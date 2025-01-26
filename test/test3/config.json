@@ -1,0 +1,31 @@
+[
+    {
+        "metaData": {
+            "name": "App Config",
+            "TypeID": "AppConfig-RANDOMSTRING"
+        },
+        "lives": [
+            {
+                "liveID": "Database-RANDOMSTRING",
+                "config": {
+                    "connectionString": "localhost:5432"
+                }
+            },
+            {
+                "liveID": "Logger-INFO",
+                "config": {
+                    "prefix": "[INFO]",
+                    "logLevel": "INFO",
+                    "enableTimestamp": true
+                }
+            },
+            {
+                "liveID": "Logger-DEBUG",
+                "config": {
+                    "prefix": "[DEBUG]",
+                    "logLevel": "DEBUG"
+                }
+            }
+        ]
+    }
+]
