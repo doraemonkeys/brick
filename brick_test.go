@@ -120,6 +120,17 @@ func TestRandomLiveID(t *testing.T) {
 		}
 		instance.T1.Test = "NOT EMPTY"
 	}
+
+	t.Run("TestBrick3", func(t *testing.T) {
+		defer func() {
+			r := recover()
+			if r != nil {
+				t.Errorf("panic: %v", r)
+			}
+
+		}()
+		Get[*TestBrick3]()
+	})
 }
 
 type TestBrick4 struct {
@@ -158,4 +169,48 @@ func Test_BrickLives(t *testing.T) {
 	if instance3.T1.Test == "NOT EMPTY" {
 		t.Errorf("instance3.T1.Test = %v, want empty", instance3.T1.Test)
 	}
+}
+
+type TestBrick5 struct {
+	T1  *TestBrick1 `brick:""`
+	T12 *TestBrick1 `brick:""`
+	T5  *TestBrick5 `brick:""`
+}
+
+func (t *TestBrick5) BrickTypeID() string {
+	return "TestBrick5"
+}
+
+type TestBrick51 struct {
+	T1  *TestBrick1  `brick:""`
+	T51 *TestBrick51 `brick:"random"`
+}
+
+func (t *TestBrick51) BrickTypeID() string {
+	return "TestBrick51"
+}
+
+func Test_RecursiveBrick(t *testing.T) {
+	t.Run("TestBrick5", func(t *testing.T) {
+		Register[*TestBrick5]()
+
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Errorf("expected panic, but no panic")
+			}
+		}()
+		Get[*TestBrick5]()
+	})
+	t.Run("TestBrick51", func(t *testing.T) {
+		Register[*TestBrick51]()
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Errorf("expected panic, but no panic")
+			}
+		}()
+		Get[*TestBrick51]()
+
+	})
 }

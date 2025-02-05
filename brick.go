@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/sync/singleflight"
 	"os"
 	"reflect"
 	"strings"
@@ -14,7 +15,6 @@ var (
 	brickManager = &BrickManager{
 		brickConfigs:     make(map[string]BrickConfig),
 		instances:        make(map[string]reflect.Value),
-		buildingBrick:    make(map[string]bool),
 		brickFactories:   make(map[string]func(config any) Brick),
 		brickTypeIDMap1:  make(map[reflect.Type]string),
 		brickTypeIDMap2:  make(map[string]reflect.Type),
@@ -55,10 +55,8 @@ type BrickManager struct {
 	declaredLiveIDs     map[string]bool
 	declaredLiveIDsLock sync.RWMutex
 
-	// buildingBrick tracks if a brick is currently being built, to prevent circular dependencies,
-	// indexed by LiveID.
-	buildingBrick     map[string]bool
-	buildingBrickLock sync.Mutex
+	// buildingBrickGroup is a group of bricks that are being built, indexed by LiveID.
+	buildingBrickGroup singleflight.Group
 
 	brickConfigCheckOnce sync.Once
 
@@ -443,7 +441,7 @@ func handleConfigHelper(config any) (conf any, maybeReplaced bool) {
 func GetOrCreate[T Brick](liveID ...string) T {
 	brickManager.brickConfigCheckOnce.Do(brickManager.checkConfig)
 	ctx := getBrickInstanceCtx{
-		buildingBrick: make(map[string]bool),
+		buildingBrick: make(map[reflect.Type]bool),
 		createUnknown: true,
 	}
 	return getBrickInstance(reflect.TypeOf((*(new(T)))), ctx, liveID...).Interface().(T)
@@ -452,14 +450,14 @@ func GetOrCreate[T Brick](liveID ...string) T {
 func Get[T Brick](liveID ...string) T {
 	brickManager.brickConfigCheckOnce.Do(brickManager.checkConfig)
 	ctx := getBrickInstanceCtx{
-		buildingBrick: make(map[string]bool),
+		buildingBrick: make(map[reflect.Type]bool),
 		createUnknown: false,
 	}
 	return getBrickInstance(reflect.TypeOf((*(new(T)))), ctx, liveID...).Interface().(T)
 }
 
 type getBrickInstanceCtx struct {
-	buildingBrick map[string]bool
+	buildingBrick map[reflect.Type]bool
 	createUnknown bool
 }
 
@@ -509,50 +507,54 @@ func getBrickInstance(brickType reflect.Type, ctx getBrickInstanceCtx, liveID ..
 		panic(fmt.Sprintf("liveID(%s) is not explicitly declared in the configuration or tag, you can use GetOrCreate to create it", targetLiveID))
 	}
 
-	if ctx.buildingBrick[targetLiveID] {
-		panic(fmt.Errorf("circular dependency detected, liveID: %s", targetLiveID))
+	if ctx.buildingBrick[brickType] {
+		panic(fmt.Errorf("circular dependency detected, brickType: %v, liveID: %s", brickType, targetLiveID))
 	}
-	ctx.buildingBrick[targetLiveID] = true
+	ctx.buildingBrick[brickType] = true
 	defer func() {
-		ctx.buildingBrick[targetLiveID] = false
+		ctx.buildingBrick[brickType] = false
 	}()
 
-	brickConfig, configExist := brickManager.getBrickConfig(targetLiveID)
-	if configExist {
-		if brickConfig.LiveID != targetLiveID {
-			panic(fmt.Errorf("config liveID mismatch: ID(%s) != ID(%s)", brickConfig.LiveID, targetLiveID))
+	v, _, _ := brickManager.buildingBrickGroup.Do(targetLiveID, func() (any, error) {
+		brickConfig, configExist := brickManager.getBrickConfig(targetLiveID)
+		if configExist {
+			if brickConfig.LiveID != targetLiveID {
+				panic(fmt.Errorf("config liveID mismatch: ID(%s) != ID(%s)", brickConfig.LiveID, targetLiveID))
+			}
+			if brickConfig.TypeID != typeID {
+				panic(fmt.Errorf("config TypeID mismatch: ID(%s) != ID(%s)", brickConfig.TypeID, typeID))
+			}
 		}
-		if brickConfig.TypeID != typeID {
-			panic(fmt.Errorf("config TypeID mismatch: ID(%s) != ID(%s)", brickConfig.TypeID, typeID))
+		brickParser, parserExist := brickManager.getBrickFactory(typeID)
+		if !parserExist {
+			ret := createEmptyInstance(brickType)
+			if ret.Type().Kind() == reflect.Ptr {
+				ret = injectBrick(ret, targetLiveID, ctx)
+			} else {
+				ret = injectBrick(wrapPointerLayer(ret), targetLiveID, ctx)
+			}
+
+			brickManager.saveBrickInstance(targetLiveID, ret)
+			return convertInstance(ret, brickType), nil
 		}
-	}
-	brickParser, parserExist := brickManager.getBrickFactory(typeID)
-	if !parserExist {
-		ret := createEmptyInstance(brickType)
+		t := brickParser(brickConfig.Config)
+		ret := reflect.ValueOf(t)
+
+		if !isSameBaseType(ret.Type(), brickType) {
+			panic(fmt.Errorf("brick(%s) %v NewBrick method return error type: %v", typeID, brickType, ret.Type()))
+		}
+		//todo: test for interface type
 		if ret.Type().Kind() == reflect.Ptr {
 			ret = injectBrick(ret, targetLiveID, ctx)
 		} else {
 			ret = injectBrick(wrapPointerLayer(ret), targetLiveID, ctx)
 		}
 
+		// fmt.Println("injectBrick ret", ret)
 		brickManager.saveBrickInstance(targetLiveID, ret)
-		return convertInstance(ret, brickType)
-	}
-	t := brickParser(brickConfig.Config)
-	ret := reflect.ValueOf(t)
-	if !isSameBaseType(ret.Type(), brickType) {
-		panic(fmt.Errorf("brick(%s) %v NewBrick method return error type: %v", typeID, brickType, ret.Type()))
-	}
-	//todo: test for interface type
-	if ret.Type().Kind() == reflect.Ptr {
-		ret = injectBrick(ret, targetLiveID, ctx)
-	} else {
-		ret = injectBrick(wrapPointerLayer(ret), targetLiveID, ctx)
-	}
-
-	// fmt.Println("injectBrick ret", ret)
-	brickManager.saveBrickInstance(targetLiveID, ret)
-	return convertInstance(ret, brickType)
+		return convertInstance(ret, brickType), nil
+	})
+	return v.(reflect.Value)
 }
 
 func isSameBaseType(typ1 reflect.Type, typ2 reflect.Type) bool {
@@ -662,9 +664,11 @@ func injectBrick(brick reflect.Value, brickLiveID string, ctx getBrickInstanceCt
 				injectInterfaceBrick(valueField, tag, ctx)
 				continue
 			}
+			var newCtx = ctx
 			liveID, _, isClone, isRandomLiveID := brickManager.parseTag(tag)
 			if isRandomLiveID {
 				liveID = RandomLiveID()
+				newCtx.createUnknown = true
 			}
 			if isClone {
 				if liveID == "" {
@@ -675,7 +679,7 @@ func injectBrick(brick reflect.Value, brickLiveID string, ctx getBrickInstanceCt
 				}
 				valueField.Set(cloneBrick2(typ, liveID))
 			} else {
-				valueField.Set(getBrickInstance(typ, ctx, liveID))
+				valueField.Set(getBrickInstance(typ, newCtx, liveID))
 			}
 		}
 	}
@@ -782,7 +786,7 @@ func cloneBrick(brickType reflect.Type, liveID string) (newBrick reflect.Value, 
 		brickManager.setBrickConfig(newLiveID, brickConfig)
 	}
 	ctx := getBrickInstanceCtx{
-		buildingBrick: make(map[string]bool),
+		buildingBrick: make(map[reflect.Type]bool),
 		createUnknown: true,
 	}
 	return getBrickInstance(brickType, ctx, newLiveID), newLiveID

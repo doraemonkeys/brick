@@ -187,20 +187,6 @@ func (b *BrickManager) setBrickConfig(liveID string, brickConfig BrickConfig) {
 	b.brickConfigs[liveID] = brickConfig
 }
 
-// setBrickBuilding sets the building status of a brick by LiveID.
-func (b *BrickManager) setBrickBuilding(liveID string, building bool) {
-	b.buildingBrickLock.Lock()
-	defer b.buildingBrickLock.Unlock()
-	b.buildingBrick[liveID] = building
-}
-
-// getBrickBuilding gets the building status of a brick by LiveID.
-func (b *BrickManager) getBrickBuilding(liveID string) bool {
-	b.buildingBrickLock.Lock()
-	defer b.buildingBrickLock.Unlock()
-	return b.buildingBrick[liveID]
-}
-
 func (b *BrickManager) setBrickTypeID(typ reflect.Type, typeID string) (success bool) {
 	b.brickTypeIDMapLock.Lock()
 	defer b.brickTypeIDMapLock.Unlock()
