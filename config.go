@@ -155,6 +155,9 @@ func (b *BrickManager) addConfigFileJson(jsonContent []byte) error {
 
 // saveBrickInstance saves a created brick instance.
 func (b *BrickManager) saveBrickInstance(liveID string, brick reflect.Value) {
+	if brick.Type().Kind() != reflect.Ptr {
+		panic(fmt.Errorf("internal error: brick(%s) instance is not a pointer", liveID))
+	}
 	b.instancesLock.Lock()
 	defer b.instancesLock.Unlock()
 	b.instances[liveID] = brick

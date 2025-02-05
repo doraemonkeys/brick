@@ -337,9 +337,7 @@ func (b *BrickManager) register(param RegisterBrickParam) {
 			ReflectType: registerType,
 		}
 		if ok {
-			params.BrickFactory = func(jsonConf []byte) Brick {
-				return instanceConfiger.NewBrick(jsonConf)
-			}
+			params.BrickFactory = instanceConfiger.NewBrick
 		}
 		if ok2 {
 			params.Lives = instanceLives.BrickLives()
@@ -444,16 +442,29 @@ func handleConfigHelper(config any) (conf any, maybeReplaced bool) {
 // Whether non-pointer type singleton components can be shared needs to be ensured by the user.
 func GetOrCreate[T Brick](liveID ...string) T {
 	brickManager.brickConfigCheckOnce.Do(brickManager.checkConfig)
-	return getBrickInstance(reflect.TypeOf((*(new(T)))), true, liveID...).Interface().(T)
+	ctx := getBrickInstanceCtx{
+		buildingBrick: make(map[string]bool),
+		createUnknown: true,
+	}
+	return getBrickInstance(reflect.TypeOf((*(new(T)))), ctx, liveID...).Interface().(T)
 }
 
 func Get[T Brick](liveID ...string) T {
 	brickManager.brickConfigCheckOnce.Do(brickManager.checkConfig)
-	return getBrickInstance(reflect.TypeOf((*(new(T)))), false, liveID...).Interface().(T)
+	ctx := getBrickInstanceCtx{
+		buildingBrick: make(map[string]bool),
+		createUnknown: false,
+	}
+	return getBrickInstance(reflect.TypeOf((*(new(T)))), ctx, liveID...).Interface().(T)
+}
+
+type getBrickInstanceCtx struct {
+	buildingBrick map[string]bool
+	createUnknown bool
 }
 
 // Interface type is not a brick type, but a brick can be injected into an interface type.
-func getBrickInstance(brickType reflect.Type, createUnknown bool, liveID ...string) reflect.Value {
+func getBrickInstance(brickType reflect.Type, ctx getBrickInstanceCtx, liveID ...string) reflect.Value {
 	// fmt.Println("getBrickInstance2", brickType)
 	typeID, ok := brickManager.getBrickTypeID(brickType)
 	if !ok {
@@ -464,7 +475,7 @@ func getBrickInstance(brickType reflect.Type, createUnknown bool, liveID ...stri
 				panic(fmt.Errorf("this brick type is not registered: %s", brickType))
 			}
 			ptrInstance := reflect.New(brickType.Elem())
-			instance := getBrickInstance(brickType.Elem(), createUnknown, liveID...)
+			instance := getBrickInstance(brickType.Elem(), ctx, liveID...)
 			ptrInstance.Elem().Set(instance)
 			return ptrInstance
 		default:
@@ -473,7 +484,7 @@ func getBrickInstance(brickType reflect.Type, createUnknown bool, liveID ...stri
 			if !ok {
 				panic(fmt.Errorf("this brick type is not registered: %s", brickType))
 			}
-			ptrInstance := getBrickInstance(typePtr, createUnknown, liveID...)
+			ptrInstance := getBrickInstance(typePtr, ctx, liveID...)
 			return ptrInstance.Elem()
 		}
 	}
@@ -494,16 +505,17 @@ func getBrickInstance(brickType reflect.Type, createUnknown bool, liveID ...stri
 	if ok {
 		return convertInstance(brick, brickType)
 	}
-	if !createUnknown && targetLiveID != typeID && !brickManager.getDeclaredLiveID(targetLiveID) {
+	if !ctx.createUnknown && targetLiveID != typeID && !brickManager.getDeclaredLiveID(targetLiveID) {
 		panic(fmt.Sprintf("liveID(%s) is not explicitly declared in the configuration or tag, you can use GetOrCreate to create it", targetLiveID))
 	}
 
-	ok = brickManager.getBrickBuilding(targetLiveID)
-	if ok {
+	if ctx.buildingBrick[targetLiveID] {
 		panic(fmt.Errorf("circular dependency detected, liveID: %s", targetLiveID))
 	}
-	brickManager.setBrickBuilding(targetLiveID, true)
-	defer brickManager.setBrickBuilding(targetLiveID, false)
+	ctx.buildingBrick[targetLiveID] = true
+	defer func() {
+		ctx.buildingBrick[targetLiveID] = false
+	}()
 
 	brickConfig, configExist := brickManager.getBrickConfig(targetLiveID)
 	if configExist {
@@ -518,10 +530,11 @@ func getBrickInstance(brickType reflect.Type, createUnknown bool, liveID ...stri
 	if !parserExist {
 		ret := createEmptyInstance(brickType)
 		if ret.Type().Kind() == reflect.Ptr {
-			ret = injectBrick(ret, targetLiveID)
+			ret = injectBrick(ret, targetLiveID, ctx)
 		} else {
-			ret = injectBrick(wrapPointerLayer(ret), targetLiveID)
+			ret = injectBrick(wrapPointerLayer(ret), targetLiveID, ctx)
 		}
+
 		brickManager.saveBrickInstance(targetLiveID, ret)
 		return convertInstance(ret, brickType)
 	}
@@ -530,12 +543,13 @@ func getBrickInstance(brickType reflect.Type, createUnknown bool, liveID ...stri
 	if !isSameBaseType(ret.Type(), brickType) {
 		panic(fmt.Errorf("brick(%s) %v NewBrick method return error type: %v", typeID, brickType, ret.Type()))
 	}
-	//todo: test for type == interface
+	//todo: test for interface type
 	if ret.Type().Kind() == reflect.Ptr {
-		ret = injectBrick(ret, targetLiveID)
+		ret = injectBrick(ret, targetLiveID, ctx)
 	} else {
-		ret = injectBrick(wrapPointerLayer(ret), targetLiveID)
+		ret = injectBrick(wrapPointerLayer(ret), targetLiveID, ctx)
 	}
+
 	// fmt.Println("injectBrick ret", ret)
 	brickManager.saveBrickInstance(targetLiveID, ret)
 	return convertInstance(ret, brickType)
@@ -611,7 +625,7 @@ func createEmptyInstance(typ reflect.Type) reflect.Value {
 }
 
 // injectBrick injects dependencies into a brick instance by looking for fields with the `brick` tag.
-func injectBrick(brick reflect.Value, brickLiveID string) reflect.Value {
+func injectBrick(brick reflect.Value, brickLiveID string, ctx getBrickInstanceCtx) reflect.Value {
 	// fmt.Println("injectBrick", brick)
 	rfValue := brick
 	for rfValue.Kind() == reflect.Ptr || rfValue.Kind() == reflect.Interface {
@@ -645,7 +659,7 @@ func injectBrick(brick reflect.Value, brickLiveID string) reflect.Value {
 				}
 			}
 			if typ.Kind() == reflect.Interface {
-				injectInterfaceBrick(valueField, tag)
+				injectInterfaceBrick(valueField, tag, ctx)
 				continue
 			}
 			liveID, _, isClone, isRandomLiveID := brickManager.parseTag(tag)
@@ -661,15 +675,16 @@ func injectBrick(brick reflect.Value, brickLiveID string) reflect.Value {
 				}
 				valueField.Set(cloneBrick2(typ, liveID))
 			} else {
-				valueField.Set(getBrickInstance(typ, true, liveID))
+				valueField.Set(getBrickInstance(typ, ctx, liveID))
 			}
 		}
 	}
+
 	return brick
 }
 
 // `brick:"liveID,typeID"`
-func injectInterfaceBrick(valueField reflect.Value, tag string) {
+func injectInterfaceBrick(valueField reflect.Value, tag string, ctx getBrickInstanceCtx) {
 	liveID, typeID, cloneBrick, isRandomLiveID := brickManager.parseTag(tag)
 	if isRandomLiveID {
 		panic(fmt.Errorf("interface type brick(%s) cannot use random liveID", valueField.Type()))
@@ -702,10 +717,11 @@ func injectInterfaceBrick(valueField reflect.Value, tag string) {
 		if cloneBrick {
 			valueField.Set(cloneBrick2(typ, liveID))
 		} else {
-			valueField.Set(getBrickInstance(typ, true, liveID))
+			valueField.Set(getBrickInstance(typ, ctx, liveID))
 		}
 		return
 	}
+
 	if typeID != "" {
 		typ, ok := brickManager.getBrickType(typeID)
 		if !ok {
@@ -714,13 +730,14 @@ func injectInterfaceBrick(valueField reflect.Value, tag string) {
 		if cloneBrick {
 			valueField.Set(cloneBrick2(typ, liveID))
 		} else {
-			valueField.Set(getBrickInstance(typ, true, liveID))
+			valueField.Set(getBrickInstance(typ, ctx, liveID))
 		}
 		return
 	}
 	// Get the type of the liveID that the user has registered
 	brickManager.liveIDTypeMapLock.RLock()
 	typ, ok := brickManager.liveIDTypeMap[liveID]
+
 	brickManager.liveIDTypeMapLock.RUnlock()
 	// if !ok {
 	// 	// Try to use liveID as typeID, get the default instance of the type.
@@ -733,10 +750,11 @@ func injectInterfaceBrick(valueField reflect.Value, tag string) {
 		if cloneBrick {
 			valueField.Set(cloneBrick2(typ, liveID))
 		} else {
-			valueField.Set(getBrickInstance(typ, true, liveID))
+			valueField.Set(getBrickInstance(typ, ctx, liveID))
 		}
 		return
 	}
+
 	panic(fmt.Errorf("the interface brick(%v) dependency not found, can't determine the type of liveID(%s)", valueField.Type(), liveID))
 }
 
@@ -763,7 +781,11 @@ func cloneBrick(brickType reflect.Type, liveID string) (newBrick reflect.Value, 
 	if ok {
 		brickManager.setBrickConfig(newLiveID, brickConfig)
 	}
-	return getBrickInstance(brickType, true, newLiveID), newLiveID
+	ctx := getBrickInstanceCtx{
+		buildingBrick: make(map[string]bool),
+		createUnknown: true,
+	}
+	return getBrickInstance(brickType, ctx, newLiveID), newLiveID
 }
 
 func cloneBrick2(brickType reflect.Type, liveID string) reflect.Value {
