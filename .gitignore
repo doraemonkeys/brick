@@ -23,3 +23,9 @@ go.work.sum
 
 # env file
 .env
+
+TODO*
+设计思路.md
+examples/simple/config.json
+test*
+!test
