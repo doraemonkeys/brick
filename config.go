@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -151,6 +152,52 @@ func (b *BrickManager) addConfigFileJson(jsonContent []byte) error {
 		return b.addConfig(configs2)
 	}
 	return errors.New("invalid config file format")
+}
+
+// handleConfig replaces environment variables in a configuration.
+func handleConfig(config any) any {
+	c, _ := handleConfigHelper(config)
+	return c
+}
+
+// handleConfigHelper is a recursive helper function for handleConfig.
+func handleConfigHelper(config any) (conf any, maybeReplaced bool) {
+	switch val := config.(type) {
+	case string:
+		if strings.HasPrefix(val, "${") && strings.HasSuffix(val, "}") {
+			conf, _ = handleConfigHelper(os.ExpandEnv(val))
+			return conf, true
+		}
+	case map[string]any:
+		for k, v := range val {
+			c, replaced := handleConfigHelper(v)
+			if replaced {
+				val[k] = c
+			}
+		}
+	case map[string]string:
+		for k, v := range val {
+			c, replaced := handleConfigHelper(v)
+			if replaced {
+				val[k] = c.(string)
+			}
+		}
+	case []any:
+		for i, v := range val {
+			c, replaced := handleConfigHelper(v)
+			if replaced {
+				val[i] = c
+			}
+		}
+	case []string:
+		for i, v := range val {
+			c, replaced := handleConfigHelper(v)
+			if replaced {
+				val[i] = c.(string)
+			}
+		}
+	}
+	return config, false
 }
 
 // saveBrickInstance saves a created brick instance.

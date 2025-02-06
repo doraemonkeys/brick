@@ -73,6 +73,6 @@ func init() {
 }
 
 func main() {
-	brick2 := brick.GetOrCreate[*Brick2]()
+	brick2 := brick.Get[*Brick2]()
 	brick2.SayHello()
 }
