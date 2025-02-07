@@ -35,25 +35,32 @@ func Get[T Brick](liveID ...string) T {
 }
 
 type getBrickInstanceCtx struct {
+	// Don't save the type of the dereferenced pointer, because if there is a circular dependency, it will save the same type twice, causing a panic.
 	buildingBrick map[reflect.Type]bool
 	createUnknown bool
 }
 
 // Interface type is not a brick type, but a brick can be injected into an interface type.
+//
+// The instance type obtained from the same liveID may be a struct, or a *struct, depending on the type of brickType.
 func getBrickInstance(brickType reflect.Type, ctx getBrickInstanceCtx, liveID ...string) reflect.Value {
 	// fmt.Println("getBrickInstance2", brickType)
 	typeID, ok := brickManager.getBrickTypeID(brickType)
+
 	if !ok {
 		switch brickType.Kind() {
 		case reflect.Ptr:
-			_, ok = brickManager.getBrickTypeID(brickType.Elem())
+			wrappedBrickType := brickType
+			for wrappedBrickType.Kind() == reflect.Ptr {
+				typeID, ok = brickManager.getBrickTypeID(wrappedBrickType.Elem())
+				if ok {
+					break
+				}
+				wrappedBrickType = wrappedBrickType.Elem()
+			}
 			if !ok {
 				panic(fmt.Errorf("this brick type is not registered: %s", brickType))
 			}
-			ptrInstance := reflect.New(brickType.Elem())
-			instance := getBrickInstance(brickType.Elem(), ctx, liveID...)
-			ptrInstance.Elem().Set(instance)
-			return ptrInstance
 		default:
 			typePtr := reflect.PointerTo(brickType)
 			_, ok = brickManager.getBrickTypeID(typePtr)
@@ -105,13 +112,8 @@ func getBrickInstance(brickType reflect.Type, ctx getBrickInstanceCtx, liveID ..
 		}
 		brickParser, parserExist := brickManager.getBrickFactory(typeID)
 		if !parserExist {
-			ret := createEmptyInstance(brickType)
-			if ret.Type().Kind() == reflect.Ptr {
-				ret = injectBrick(ret, targetLiveID, ctx)
-			} else {
-				ret = injectBrick(wrapPointerLayer(ret), targetLiveID, ctx)
-			}
-
+			ret := createEmptyPtrInstance(brickType)
+			ret = injectBrick(ret, targetLiveID, ctx)
 			brickManager.saveBrickInstance(targetLiveID, ret)
 			return convertInstance(ret, brickType), nil
 		}

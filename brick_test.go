@@ -1,8 +1,10 @@
 package brick
 
 import (
+	"fmt"
 	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -190,6 +192,15 @@ func (t *TestBrick51) BrickTypeID() string {
 	return "TestBrick51"
 }
 
+type TestBrick52 struct {
+	T1  *TestBrick1    `brick:""`
+	T52 ***TestBrick52 `brick:"random"`
+}
+
+func (t TestBrick52) BrickTypeID() string {
+	return "TestBrick52"
+}
+
 func Test_RecursiveBrick(t *testing.T) {
 	t.Run("TestBrick5", func(t *testing.T) {
 		Register[*TestBrick5]()
@@ -209,8 +220,192 @@ func Test_RecursiveBrick(t *testing.T) {
 			if r == nil {
 				t.Errorf("expected panic, but no panic")
 			}
+			if strings.Contains(fmt.Sprintf("%v", r), "overflow") {
+				t.Errorf("expected no overflow, but overflow")
+			}
 		}()
 		Get[*TestBrick51]()
 
 	})
+	t.Run("TestBrick52", func(t *testing.T) {
+		Register[TestBrick52]()
+		defer func() {
+			r := recover()
+			// t.Logf("panic: %v", r)
+			if r == nil {
+				t.Errorf("expected panic, but no panic")
+			}
+			if strings.Contains(fmt.Sprintf("%v", r), "overflow") {
+				t.Errorf("expected no overflow, but overflow")
+			}
+		}()
+		Get[TestBrick52]()
+	})
+
+}
+
+type TestBrick6 struct {
+	T1 *TestBrick1 `brick:""`
+	T3 TestBrick3  `brick:""`
+}
+
+func (t TestBrick6) BrickTypeID() string {
+	return "TestBrick6"
+}
+
+func Test_NonPtrBrick(t *testing.T) {
+	Register[TestBrick6]()
+	Get[TestBrick6]()
+}
+
+func TestCreateEmptyPtrInstance(t *testing.T) {
+	c := &customStruct{}
+	tests := []struct {
+		name     string
+		typ      reflect.Type
+		expected interface{}
+	}{
+		{
+			name:     "int",
+			typ:      reflect.TypeOf(int(0)),
+			expected: new(int),
+		},
+		{
+			name:     "*int",
+			typ:      reflect.TypeOf(new(int)),
+			expected: new(int),
+		},
+		{
+			name:     "string",
+			typ:      reflect.TypeOf(""),
+			expected: new(string),
+		},
+		{
+			name:     "*string",
+			typ:      reflect.TypeOf(new(string)),
+			expected: new(string),
+		},
+		{
+			name:     "**int",
+			typ:      reflect.TypeOf(new(*int)),
+			expected: new(*int),
+		},
+		{
+			name:     "struct",
+			typ:      reflect.TypeOf(struct{}{}),
+			expected: &struct{}{},
+		},
+		{
+			name:     "*struct",
+			typ:      reflect.TypeOf(&struct{}{}),
+			expected: &struct{}{},
+		},
+		{
+			name: "struct with fields",
+			typ: reflect.TypeOf(struct {
+				A int
+				B string
+			}{}),
+			expected: &struct {
+				A int
+				B string
+			}{},
+		},
+		{
+			name: "*struct with fields",
+			typ: reflect.TypeOf(&struct {
+				A int
+				B string
+			}{}),
+			expected: &struct {
+				A int
+				B string
+			}{},
+		},
+		{
+			name:     "***int",
+			typ:      reflect.TypeOf(new(**int)), // ***int
+			expected: new(**int),
+		},
+		{
+			name:     "[]int",
+			typ:      reflect.TypeOf([]int{}),
+			expected: &[]int{}, // Note: returns a pointer to a slice
+		},
+		{
+			name:     "*[]int",
+			typ:      reflect.TypeOf(&[]int{}),
+			expected: &[]int{},
+		},
+		{
+			name:     "map[string]int",
+			typ:      reflect.TypeOf(map[string]int{}),
+			expected: &map[string]int{}, // Pointer to map
+		},
+		{
+			name:     "*map[string]int",
+			typ:      reflect.TypeOf(&map[string]int{}),
+			expected: &map[string]int{},
+		},
+		{
+			name:     "custom type",
+			typ:      reflect.TypeOf(customType(0)),
+			expected: new(customType),
+		},
+		{
+			name:     "*custom type",
+			typ:      reflect.TypeOf(new(customType)),
+			expected: new(customType),
+		},
+		{
+			name:     "custom struct type",
+			typ:      reflect.TypeOf(customStruct{}),
+			expected: &customStruct{},
+		},
+		{
+			name:     "*custom struct type",
+			typ:      reflect.TypeOf(&customStruct{}),
+			expected: &customStruct{},
+		},
+		{
+			name:     "**custom struct type",
+			typ:      reflect.TypeOf((**customStruct)(nil)),
+			expected: &c,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := createEmptyPtrInstance(tt.typ)
+
+			// Compare Types
+			if got.Type() != reflect.TypeOf(tt.expected) {
+				t.Errorf("createEmptyPtrInstance() type = %v, want %v", got.Type(), reflect.TypeOf(tt.expected))
+			}
+
+			// Check if it's a pointer
+			if got.Kind() != reflect.Ptr {
+				t.Errorf("createEmptyPtrInstance() kind = %v, want Ptr", got.Kind())
+			}
+
+			// For pointer to pointer types, check if the inner pointer is nil
+			if tt.typ.Kind() == reflect.Ptr && tt.typ.Elem().Kind() == reflect.Ptr {
+				if got.Elem().IsNil() {
+					t.Errorf("Inner element should not be a nil pointer. Got Kind: %v", got.Elem().Elem().Kind())
+				}
+			}
+			if tt.typ.Kind() == reflect.Ptr && tt.typ.Elem().Kind() == reflect.Ptr && tt.typ.Elem().Elem().Kind() == reflect.Ptr {
+				if got.Elem().Elem().IsNil() {
+					t.Errorf("Inner element should not be a nil pointer. Got Kind: %v", got.Elem().Elem().Elem().Kind())
+				}
+			}
+
+		})
+	}
+}
+
+type customType int
+type customStruct struct {
+	A int
+	B string
 }

@@ -203,12 +203,27 @@ func wrapPointerLayer(value reflect.Value) reflect.Value {
 	return ret
 }
 
+// typ should not be a interface
 func createEmptyInstance(typ reflect.Type) reflect.Value {
-	if typ.Kind() == reflect.Ptr || typ.Kind() == reflect.Interface {
+	if typ.Kind() == reflect.Ptr {
 		instance := createEmptyInstance(typ.Elem())
 		ptrInstance := reflect.New(typ.Elem())
 		ptrInstance.Elem().Set(instance)
 		return ptrInstance
 	}
 	return reflect.New(typ).Elem()
+}
+
+// create a new pointer instance even if the type is not a pointer
+func createEmptyPtrInstance(typ reflect.Type) reflect.Value {
+	if typ.Kind() == reflect.Ptr {
+		wrappedTyp := typ.Elem()
+		if wrappedTyp.Kind() == reflect.Ptr {
+			instance := reflect.New(wrappedTyp)
+			instance.Elem().Set(createEmptyPtrInstance(wrappedTyp))
+			return instance
+		}
+		return reflect.New(wrappedTyp)
+	}
+	return reflect.New(typ)
 }
