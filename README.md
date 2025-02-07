@@ -3,11 +3,20 @@
 
 # Brick
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/doraemonkeys/brick.svg)](https://pkg.go.dev/github.com/doraemonkeys/brick) [![Go Report Card](https://goreportcard.com/badge/github.com/doraemonkeys/brick)](https://goreportcard.com/report/github.com/doraemonkeys/brick) [![Coverage Status](https://coveralls.io/repos/github/doraemonkeys/brick/badge.svg)](https://coveralls.io/github/doraemonkeys/brick)
+
 Brick is a lightweight and non-intrusive library designed for component-based configuration management and dependency injection. "Lightweight" means the library has a simple implementation and is easy to use. "Non-intrusive" means that Brick is not a framework but rather a library; you can easily leverage its dependency injection and configuration management features without modifying the logic of your existing code.
 
 
 
 Unlike libraries that strive to maximize support for default behaviors, Brick prioritizes certainty for developers. It thoroughly checks for potential injection errors and throws a `panic` during startup to ensure they are addressed immediately. This allows you to use Brick confidently, without constantly needing to worry about hidden issues.
+
+## Installation
+
+```bash
+go get github.com/doraemonkeys/brick
+```
+> Require Go 1.23 or higher
 
 ## Getting Started
 

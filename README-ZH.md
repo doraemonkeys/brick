@@ -4,6 +4,7 @@
 
 # brick
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/doraemonkeys/brick.svg)](https://pkg.go.dev/github.com/doraemonkeys/brick) [![Go Report Card](https://goreportcard.com/badge/github.com/doraemonkeys/brick)](https://goreportcard.com/report/github.com/doraemonkeys/brick) [![Coverage Status](https://coveralls.io/repos/github/doraemonkeys/brick/badge.svg)](https://coveralls.io/github/doraemonkeys/brick)
 
 
 brick是一个轻量级非侵入式的组件化的配置管理与依赖注入库。轻量意味着Brick库实现逻辑简单使用方便，非侵入式意味着Brick并非是一个框架而是一个库，你可以不修改现有代码的逻辑而轻松使用Brick提供的依赖注入与配置管理功能。
@@ -11,6 +12,15 @@ brick是一个轻量级非侵入式的组件化的配置管理与依赖注入库
 
 
 brick库并非最大限度的支持默认行为，相反，为了弥补使用反射给程序员带来的不确定性，它尽可能的对一切异常注入行为进行检查，并在启动时抛出panic以便错误得到及时修正。所以你可以安心使用brick库，不必总是小心翼翼。
+
+
+
+## Installation
+
+```bash
+go get github.com/doraemonkeys/brick
+```
+> Require Go 1.23 or higher
 
 
 
