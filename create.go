@@ -3,6 +3,7 @@ package brick
 import (
 	"fmt"
 	"reflect"
+	"unsafe"
 )
 
 // GetOrCreate like Get, but it will create a new instance for unknown liveID.
@@ -193,6 +194,22 @@ func injectBrick(brick reflect.Value, brickLiveID string, ctx getBrickInstanceCt
 		typeField := rfType.Field(i)
 		valueField := rfValue.Field(i)
 		if !valueField.CanSet() {
+			continue
+		}
+		if typeField.Anonymous && typeField.Name == "BrickBase" {
+			if typeField.Type.Kind() == reflect.Ptr {
+				valueField.Set(reflect.New(typeField.Type.Elem()))
+				// Get the unexported field.
+				unexportedField := valueField.Elem().FieldByName("liveID")
+				// Use unsafe to get an addressable value.
+				unsafeField := reflect.NewAt(unexportedField.Type(), unsafe.Pointer(unexportedField.UnsafeAddr())).Elem()
+				unsafeField.SetString(brickLiveID)
+			} else {
+				// valueField.FieldByName("liveID").SetString(brickLiveID)
+				unexportedField := valueField.FieldByName("liveID")
+				unsafeField := reflect.NewAt(unexportedField.Type(), unsafe.Pointer(unexportedField.UnsafeAddr())).Elem()
+				unsafeField.SetString(brickLiveID)
+			}
 			continue
 		}
 		if tag, ok := typeField.Tag.Lookup(brickTag); ok {

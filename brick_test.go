@@ -409,3 +409,41 @@ type customStruct struct {
 	A int
 	B string
 }
+
+type TestBrick7 struct {
+	BrickBase[*TestBrick7]
+	T1 *TestBrick1 `brick:""`
+}
+
+func (t *TestBrick7) BrickTypeID() string {
+	return "TestBrick7"
+}
+
+type TestBrick71 struct {
+	BrickBase[*TestBrick71]
+	T1 *TestBrick1 `brick:""`
+}
+
+func (t TestBrick71) BrickTypeID() string {
+	return "TestBrick71"
+}
+
+func Test_BaseBrick(t *testing.T) {
+	Register[*TestBrick7]()
+	b := Get[*TestBrick7]()
+	if GetBrickTypeID[*TestBrick7]() != "TestBrick7" {
+		t.Errorf("GetBrickTypeID[*TestBrick7]() = %v, want %v", GetBrickTypeID[*TestBrick7](), "TestBrick7")
+	}
+	if b.BrickLiveID() != GetBrickTypeID[*TestBrick7]() {
+		t.Errorf("b.BrickLiveID = %v, want %v", b.BrickLiveID(), GetBrickTypeID[*TestBrick7]())
+	}
+
+	RegisterNewer[*TestBrick71]()
+	b1 := Get[*TestBrick71]()
+	if GetBrickTypeID[*TestBrick71]() != "TestBrick71" {
+		t.Errorf("GetBrickTypeID[*TestBrick71]() = %v, want %v", GetBrickTypeID[*TestBrick71](), "TestBrick71")
+	}
+	if b1.BrickLiveID() != GetBrickTypeID[*TestBrick71]() {
+		t.Errorf("b1.BrickLiveID = %v, want %v", b1.BrickLiveID(), GetBrickTypeID[*TestBrick71]())
+	}
+}

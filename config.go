@@ -24,6 +24,16 @@ func (b *BrickManager) AddConfigFile(path string) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		b.configsLock.Lock()
+		for i := 0; i < len(b.configs); i++ {
+			if b.configs[i].filePath == path {
+				panic(fmt.Errorf("config file(%s) already exists", path))
+			}
+		}
+		b.configs = append(b.configs, NewConfigManager(path))
+		b.configsLock.Unlock()
+	}()
 	ext := filepath.Ext(path)
 	switch ext {
 	case ".json":
@@ -164,7 +174,7 @@ func handleConfig(config any) any {
 func handleConfigHelper(config any) (conf any, maybeReplaced bool) {
 	switch val := config.(type) {
 	case string:
-		if strings.HasPrefix(val, "${") && strings.HasSuffix(val, "}") {
+		if isEnvConfigItem(val) {
 			conf, _ = handleConfigHelper(os.ExpandEnv(val))
 			return conf, true
 		}
@@ -284,6 +294,19 @@ func (b *BrickManager) setDeclaredLiveID(liveID string) {
 	b.declaredLiveIDs[liveID] = true
 }
 
+func (b *BrickManager) saveBrickConfig(typeID string, brickLiveID string, brickConfig []byte) error {
+	var err error
+	for i := 0; i < len(b.configs); i++ {
+		b.configsLock.RLock()
+		config := b.configs[i]
+		b.configsLock.RUnlock()
+		if err = config.saveBrickConfig(typeID, brickLiveID, brickConfig); err == nil {
+			return nil
+		}
+	}
+	return err
+}
+
 type TypeLives struct {
 	TypeID string
 	Lives  []Live
@@ -294,4 +317,257 @@ type Live struct {
 	LiveID string
 	// key:field name, value:liveID
 	RelyLives map[string]string
+}
+
+type BrickBase[T Brick] struct {
+	// brickTypeID string
+	// BrickLiveID string
+	liveID string `json:"-" yaml:"-" toml:"-"`
+	// lock        *sync.Mutex
+}
+
+func (c BrickBase[T]) SaveBrickConfig(config any) error {
+	j, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	return brickManager.saveBrickConfig(GetBrickTypeID[T](), c.liveID, j)
+}
+
+func (c BrickBase[T]) BrickLiveID() string {
+	if c.liveID == "" {
+		panic(fmt.Errorf("this brick(%s) has not been injected", GetBrickTypeID[T]()))
+	}
+	return c.liveID
+}
+
+func (c BrickBase[T]) NewBrick(config []byte) Brick {
+	var newBrick = *new(T)
+	if len(config) > 0 {
+		if err := json.Unmarshal(config, newBrick); err != nil {
+			panic(fmt.Errorf("parse brick config error: %w", err))
+		}
+		return newBrick
+	}
+	typ := reflect.TypeOf(newBrick)
+	if typ.Kind() != reflect.Ptr {
+		return newBrick
+	}
+	typ = typ.Elem()
+	emptyInstance := createEmptyPtrInstance(typ)
+	return emptyInstance.Interface().(Brick)
+}
+
+type ConfigManager struct {
+	configMu sync.Mutex
+	// used to determine if the config has changed
+	// lastLoadedConfig []byte
+	configIsArray bool
+	filePath      string
+}
+
+func NewConfigManager(filePath string) *ConfigManager {
+	var configManager = ConfigManager{
+		filePath: filePath,
+	}
+	return &configManager
+}
+
+func (c *ConfigManager) Load() ([]BrickFileConfig, error) {
+	content, err := os.ReadFile(c.filePath)
+	if err != nil {
+		return nil, err
+	}
+	ext := filepath.Ext(c.filePath)
+	switch ext {
+	case ".json":
+		return c.loadJson(content)
+	// case ".yaml", ".yml":
+	default:
+		return nil, fmt.Errorf("unsupported file type: %s", ext)
+	}
+}
+
+func (c *ConfigManager) loadJson(content []byte) ([]BrickFileConfig, error) {
+	var configs1 struct {
+		Bricks []BrickFileConfig `json:"bricks"`
+	}
+	err1 := json.Unmarshal(content, &configs1)
+	if err1 == nil && configs1.Bricks != nil {
+		// brickBytes, err := json.Marshal(configs1.Bricks)
+		// if err != nil {
+		// 	return nil, err
+		// }
+		// c.lastLoadedConfig = brickBytes
+		return configs1.Bricks, nil
+	}
+	var configs2 []BrickFileConfig
+	err2 := json.Unmarshal(content, &configs2)
+	if err2 == nil {
+		// c.lastLoadedConfig = content
+		c.configIsArray = true
+		return configs2, nil
+	}
+	return nil, errors.New("invalid config file format")
+}
+
+func (c *ConfigManager) saveBrickConfig(typeID string, brickLiveID string, brickConfig []byte) (err error) {
+	// oldLastLoadedConfig := c.lastLoadedConfig
+	configs, err := c.Load()
+	if err != nil {
+		return err
+	}
+	var brickConfigParsed any
+	err = json.Unmarshal(brickConfig, &brickConfigParsed)
+	if err != nil {
+		return err
+	}
+	// configIndex := -1
+	for i, config := range configs {
+		if config.MetaData.TypeID == typeID {
+			for j, live := range config.Lives {
+				if live.LiveID == brickLiveID {
+					newEnvs := make(map[string]string)
+					configs[i].Lives[j].Config, _ = retainEnvConfigItem(configs[i].Lives[j].Config, brickConfigParsed, newEnvs)
+					c.configMu.Lock()
+					defer c.configMu.Unlock()
+					return c.saveChanged(brickLiveID, configs, i, j, newEnvs)
+				}
+			}
+		}
+	}
+	return fmt.Errorf("brick(%s) config not found", brickLiveID)
+	// if configIndex == -1 {
+	// 	var newConfig BrickFileConfig
+	// 	newConfig.MetaData.TypeID = typeID
+	// 	configs = append(configs, newConfig)
+	// 	configIndex = len(configs) - 1
+	// }
+	// var newLive = struct {
+	// 	LiveID string `json:"liveID" yaml:"liveID" toml:"liveID"`
+	// 	Config any    `json:"config" yaml:"config" toml:"config"`
+	// }{
+	// 	LiveID: brickLiveID,
+	// 	Config: brickConfig,
+	// }
+	// newLive.LiveID = brickLiveID
+	// newLive.Config = brickConfigParsed
+	// configs[configIndex].Lives = append(configs[configIndex].Lives, newLive)
+	// return c.saveToFile(configs)
+}
+
+func (c *ConfigManager) saveChanged(brickLiveID string, configs []BrickFileConfig, i, j int, newEnvs map[string]string) error {
+	var err2 error
+	ext := filepath.Ext(c.filePath)
+	switch ext {
+	case ".json":
+		if c.configIsArray {
+			content, err := json.MarshalIndent(configs, "", "    ")
+			if err != nil {
+				return err
+			}
+			err2 = WriteFilePerm(c.filePath, content)
+		} else {
+			fileContent, err := os.ReadFile(c.filePath)
+			if err != nil {
+				return err
+			}
+			var allConfigs map[string]any
+			err = json.Unmarshal(fileContent, &allConfigs)
+			if err != nil {
+				return err
+			}
+			allConfigs["bricks"] = configs
+			content, err := json.MarshalIndent(allConfigs, "", "    ")
+			if err != nil {
+				return err
+			}
+			err2 = WriteFilePerm(c.filePath, content)
+		}
+	default:
+		return fmt.Errorf("unsupported file type: %s", ext)
+	}
+	if err2 != nil {
+		return err2
+	}
+	for k, v := range newEnvs {
+		setEnvConfigItem(k, v)
+	}
+	brickManager.setBrickConfig(brickLiveID, BrickConfig{
+		TypeID:  configs[i].MetaData.TypeID,
+		LiveID:  brickLiveID,
+		noCheck: configs[i].MetaData.NoCheck,
+		Config:  configs[i].Lives[j].Config,
+	})
+	return nil
+}
+
+func isEnvConfigItem(item string) bool {
+	return strings.HasPrefix(item, "${") && strings.HasSuffix(item, "}")
+}
+
+func setEnvConfigItem(item string, value string) {
+	item = strings.TrimPrefix(item, "${")
+	item = strings.TrimSuffix(item, "}")
+	_ = os.Setenv(item, value)
+}
+
+func retainEnvConfigItem(oldConfig any, newConfig any, newEnvs map[string]string) (conf any, maybeReplaced bool) {
+	switch val := oldConfig.(type) {
+	case string:
+		newVal, ok := newConfig.(string)
+		if !ok {
+			return newConfig, false
+		}
+		if isEnvConfigItem(val) {
+			// setEnvConfigItem(val, newVal)
+			newEnvs[val] = newVal
+			return oldConfig, true
+		}
+	case map[string]any:
+		newVal, ok := newConfig.(map[string]any)
+		if !ok {
+			return newConfig, false
+		}
+		for k, v := range val {
+			c, replaced := retainEnvConfigItem(v, newVal[k], newEnvs)
+			if replaced {
+				newVal[k] = c
+			}
+		}
+	case map[string]string:
+		newVal, ok := newConfig.(map[string]string)
+		if !ok {
+			return newConfig, false
+		}
+		for k, v := range val {
+			c, replaced := retainEnvConfigItem(v, newVal[k], newEnvs)
+			if replaced {
+				newVal[k] = c.(string)
+			}
+		}
+	case []any:
+		newVal, ok := newConfig.([]any)
+		if !ok {
+			return newConfig, false
+		}
+		for i, v := range val {
+			c, replaced := retainEnvConfigItem(v, newVal[i], newEnvs)
+			if replaced {
+				newVal[i] = c
+			}
+		}
+	case []string:
+		newVal, ok := newConfig.([]string)
+		if !ok {
+			return newConfig, false
+		}
+		for i, v := range val {
+			c, replaced := retainEnvConfigItem(v, newVal[i], newEnvs)
+			if replaced {
+				newVal[i] = c.(string)
+			}
+		}
+	}
+	return newConfig, false
 }

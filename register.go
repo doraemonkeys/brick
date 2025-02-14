@@ -31,6 +31,19 @@ func Register[T Brick]() {
 	brickManager.register2(brick.BrickTypeID(), newInstancePtr.Type())
 }
 
+func GetBrickTypeID[T Brick]() string {
+	var instance = *new(T)
+	var typ = reflect.TypeOf(instance)
+	if typ.Kind() != reflect.Ptr {
+		return instance.BrickTypeID()
+	}
+	for typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	}
+	newInstancePtr := reflect.New(typ)
+	return newInstancePtr.Interface().(Brick).BrickTypeID()
+}
+
 // RegisterNewer like Register, but it also registers a factory for configuration parsing.
 // The provided type must implement the BrickNewer interface, which includes the NewBrick method
 // for parsing configurations.
@@ -38,13 +51,21 @@ func RegisterNewer[T BrickNewer]() {
 	// Pointer receiver registers pointer type, value receiver registers value type
 	var instance = *new(T)
 	var typ = reflect.TypeOf(instance)
+	var check = func() {
+		baseField, ok := typ.FieldByName("BrickBase")
+		if ok && baseField.Anonymous && baseField.Type.Kind() == reflect.Ptr {
+			panic(fmt.Errorf("brick base field of %s can't be a pointer", typ))
+		}
+	}
 	if typ.Kind() != reflect.Ptr {
+		check()
 		brickManager.register2(instance.BrickTypeID(), typ, instance.NewBrick)
 		return
 	}
 	for typ.Kind() == reflect.Ptr {
 		typ = typ.Elem()
 	}
+	check()
 	newInstancePtr := reflect.New(typ)
 	if typ.Implements(brickNewerInterfaceType) {
 		brick, _ := newInstancePtr.Elem().Interface().(BrickNewer)
@@ -71,7 +92,14 @@ func RegisterLives[T BrickLives]() {
 		}
 		brickManager.register(param)
 	}()
+	var check = func() {
+		baseField, ok := typ.FieldByName("BrickBase")
+		if ok && baseField.Anonymous && baseField.Type.Kind() == reflect.Ptr {
+			panic(fmt.Errorf("brick base field of %s can't be a pointer", typ))
+		}
+	}
 	if typ.Kind() != reflect.Ptr {
+		check()
 		param.ReflectType = typ
 		param.TypeID = instance.BrickTypeID()
 		param.Lives = instance.BrickLives()
@@ -81,6 +109,7 @@ func RegisterLives[T BrickLives]() {
 	for typ.Kind() == reflect.Ptr {
 		typ = typ.Elem()
 	}
+	check()
 	newInstancePtr := reflect.New(typ)
 	if typ.Implements(brickLivesInterfaceType) {
 		brick, _ := newInstancePtr.Elem().Interface().(BrickLives)

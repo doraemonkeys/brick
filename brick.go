@@ -19,6 +19,7 @@ var (
 		liveIDTypeMap:    make(map[string]reflect.Type),
 		declaredLiveIDs:  make(map[string]bool),
 		liveIDConstraint: true,
+		configs:          make([]*ConfigManager, 0, 1),
 	}
 )
 
@@ -57,6 +58,9 @@ type BrickManager struct {
 	buildingBrickGroup singleflight.Group
 
 	brickConfigCheckOnce sync.Once
+
+	configs     []*ConfigManager
+	configsLock sync.RWMutex
 
 	// liveIDConstraint is a flag to control whether the constraint that all instances of the same brick type must have one liveID set to typeID is enabled.
 	liveIDConstraint bool
